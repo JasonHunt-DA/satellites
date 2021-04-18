@@ -1,0 +1,490 @@
+---
+title: "Currently Active Man-made Satellites"
+output: 
+  flexdashboard::flex_dashboard:
+  orientation: columns
+vertical_layout: fill
+---
+
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(magrittr)
+library(dplyr)
+library(tidyr)
+library(RColorBrewer)
+library(forcats)
+library(ggplot2)
+library(viridis)
+library(readxl)
+library(lubridate)
+
+
+# read in the datafile
+#UCS_sat_data_load <- read.table("~/Assignment/UCS-Satellite-Database-8-1-2020.txt",sep="\t", header=TRUE)
+UCS_sat_data_load <- read_excel("~/Ass02/UCS-Satellite-Database-8-1-2020.xls")
+
+# make copy of data to play with
+all_sats_data <- UCS_sat_data_load 
+
+coul <- brewer.pal(8, "Set2")
+countries <- c("USA","China","Russia","Japan","Australia","ESA","UK","India")
+countries_sort <- c("USA","China","Russia","UK","Japan","India","ESA","Australia")
+key_countries <- c("USA","China","Russia","UK","Japan","India")
+key_countriesr <- c("India","Japan","UK","Russia","China","USA")
+ctry_sort_top <- c("USA","China","Russia","UK","Japan","Multinational","India","ESA","Canada","Germany","Australia")
+ctry_sort_topr <- c("Australia","Germany","Canada","ESA","India","Multinational","Japan","UK","Russia","China","USA")
+valid_orbits <- c('LEO','GEO','MEO','Elliptical')
+valid_orbits_rev <- c('Elliptical','MEO','GEO','LEO')
+
+# filter out the three satellites with no values dropping three records
+all_sats_actual <- all_sats_data %>% filter(all_sats_data$'Class of Orbit' %in% valid_orbits)
+
+# filter a list of recorded dry masses for satellites
+rec_dry_masses <- filter(all_sats_actual,!is.na(all_sats_actual$`Dry Mass (kg.)`))  %>% 
+  select(1,2,18)
+rec_dry_masses$`Dry Mass (kg.)` <- as.numeric(rec_dry_masses$`Dry Mass (kg.)`)
+
+rec_dry_masses <- filter(all_sats_actual,all_sats_actual$`Dry Mass (kg.)`>0)  %>% 
+  select(1,2,18)
+rec_dry_masses_err <- filter(all_sats_actual,all_sats_actual$`Dry Mass (kg.)`=="1,500-1,900")
+rec_dry_masses$`Dry Mass (kg.)` <- as.numeric(rec_dry_masses$`Dry Mass (kg.)`)
+unique(rec_dry_masses$`Dry Mass (kg.)`)
+
+# strip out columns that I dont need
+sats_basics <- all_sats_actual %>% 
+  select(1:10,20:21,24)
+
+# give the columns easier names to deal with
+names(sats_basics) <- c("name","officialName","regCountry","country","owner","users","purpose","detPurpose",
+                      "orbitClass","orbitType","launchDate","lifeExpectency","launch")
+
+# add some columns for working with the date
+sats_basics$lDte <- as.Date(sats_basics$launchDate)
+sats_basics$lYear <- format(sats_basics$launchDate, format = "%Y")
+sats_basics$lMon <- format(sats_basics$launchDate, format = "%m")
+sats_basics$lMonNme <- month(sats_basics$lDte,label=TRUE)
+
+
+# make some entries easier to deal with
+sats_basics$country <- ifelse(sats_basics$country=="United Kingdom","UK",sats_basics$country) 
+
+# create some useful overall Statistics
+num_active_sats <- as.integer(nrow(sats_basics))
+#sml_active_sats <- min(rec_dry_masses$`Dry Mass (kg.)`)
+#lrg_active_sats <- max(rec_dry_masses$`Dry Mass (kg.)`)
+
+
+# create some date based info
+Sputnik_date <- as.Date("1957-10-04")
+sat_launch_dates <- sats_basics %>%   
+                    group_by(lDte)  %>%
+                    summarise(value=n())
+
+oldest_launch_date <- min(sat_launch_dates$lDte)
+
+oldest_sat <- round(as.numeric(difftime(Sys.Date(),min(sat_launch_dates$lDte), units = "weeks"))/52.25,0)
+years_Sputnik <- round(as.numeric(difftime(Sys.Date(),Sputnik_date, units = "weeks"))/52.25,0)
+sats_this_yr <- nrow(filter(sats_basics,sats_basics$lYear==2020))
+sats_last_yr <- nrow(filter(sats_basics,sats_basics$lYear==2019))
+
+# summarise some data
+iSatsCtryN <- sats_basics %>%
+  group_by(country) %>%
+  summarise(value = n())
+num_countries <- nrow(iSatsCtryN)
+
+# Gather the top 10 and Australa
+iSatsCtryN <- rbind((iSatsCtryN[order(-iSatsCtryN$value),][1:10,]),(iSatsCtryN[order(-iSatsCtryN$value),][16,])) %>% 
+              arrange(desc(value))
+iSatsCtryN$country <- factor(iSatsCtryN$country, levels = ctry_sort_topr)
+
+# filter down to a specific group of countries to investigate
+inv_sats <- sats_basics %>% filter(country %in% key_countries)
+
+# create levels for country
+inv_sats$country <- factor(inv_sats$country, levels = key_countries)
+# create levels for orbits
+inv_sats$orbitClass <- factor(inv_sats$orbitClass, levels = valid_orbits)
+inv_sats$orbitClassR <- factor(inv_sats$orbitClass, levels = valid_orbits_rev)
+
+inv_sats$grpUsers <- ifelse(startsWith(inv_sats$users, "Ci"),"Civil",
+                            ifelse(startsWith(inv_sats$users, "Co"),"Commercial",
+                                   ifelse(startsWith(inv_sats$users, "Go"),"Government","Military")))
+
+inv_sats$grpPurpose <- ifelse(startsWith(inv_sats$purpose, "Commun"),"Communication",
+                              ifelse(startsWith(inv_sats$purpose, "Earth"),"Earth Observation",
+                                     ifelse(startsWith(inv_sats$purpose, "Tech"),"Technology",
+                                            ifelse(startsWith(inv_sats$purpose, "Space"),"Space science",
+                                                   ifelse(startsWith(inv_sats$purpose, "Navig"),"Navigation",
+                                                          ifelse(startsWith(inv_sats$purpose, "Edu"),"Education","Other"))))))
+
+# keep until I can resolve the factor level issue
+inv_sats$ordOrbits <- ifelse(inv_sats$orbitClass == "LEO",1,
+                             ifelse(inv_sats$orbitClass == "MEO",2,
+                                    ifelse(inv_sats$orbitClass == "GEO",3,4)))
+
+inv_sats$orbitClassDet <- ifelse(inv_sats$orbitClass == "LEO","Low Earth Orbit",
+                             ifelse(inv_sats$orbitClass == "MEO","Medium Earth Orbit",
+                                    ifelse(inv_sats$orbitClass == "GEO","Geosynchronous Orbit","Elliptical Orbits")))
+
+inv_sats$orbitClassDetH <- ifelse(inv_sats$orbitClass == "LEO","LEO: 80~1,700 Km",
+                             ifelse(inv_sats$orbitClass == "MEO","MEO: 1,700~35,700 Km",
+                                    ifelse(inv_sats$orbitClass == "GEO","GEO: ~35,700 Km","Elliptical")))
+
+# create a frequency table by purpose
+sats_purpose <- inv_sats %>% 
+  group_by(country,grpUsers,grpPurpose) %>%
+  summarise(value = n())  %>%
+  arrange(desc(value))
+#names(sats_purpose) <- c("Country","Freq")
+
+# A colorblind friendly palette with grey:
+cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+
+
+
+
+
+
+```
+
+
+Overview
+=======================================================================
+
+Column {data-width=50}
+-----------------------------------------------------------------------
+
+### Number of Active Satellites
+  
+```{r}
+
+valueBox(prettyNum(num_active_sats,big.mark = ","),        # Display commas in big numbers
+          caption = "Active Satellites")
+
+# Figure 1: "Active Satellites", Hunt J 2020,Source: (Union of Concerned Scientists 2020) https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg
+
+```
+
+### Countries with Satellites
+  
+```{r}
+
+valueBox(num_countries,       
+          caption = paste("Countries with satellites"))
+
+# Figure 2: "Satellite Countries", Hunt J 2020,Source: (Union of Concerned Scientists 2020) https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg
+
+```
+
+
+### Age of oldest Satellite
+  
+```{r}
+
+valueBox(oldest_sat,       
+          caption = paste("Oldest satellite. Launched in ",oldest_launch_date))
+
+# Figure 3: "Oldest Satellite", Hunt J 2020,Source: (Union of Concerned Scientists 2020) https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg
+
+```
+
+### 2020 Launches
+  
+```{r}
+
+valueBox(sats_this_yr,       
+          caption = "Launched in 2020") 
+#          icon = "fas fa-satellite",
+#          color = "aqua")
+
+# Figure 4: "2020 Launches", Hunt J 2020,Source: (Union of Concerned Scientists 2020) https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg
+
+```
+
+### Sputnik Launches
+  
+```{r}
+
+valueBox(years_Sputnik,       
+          caption = "Years since Sputnik's launch")
+
+# Figure 5: "Sputniks Launch", Hunt J 2020,Source: (Miscahi, J 2017) <https://www.worldatlas.com/articles/what-was-the-first-satellite-launched-into-space.html#:~:text=Sputnik%201%20was%20the%20first%20ever%20satellite%20to,a%20rocket%20scientist%2C%20who%20named%20it%20Sputnik%201.>
+
+```
+
+
+
+
+
+Column {data-width=550}
+-----------------------------------------------------------------------
+
+### Satellite owners {.no-title}
+
+```{r}
+
+p_iSatCty <- ggplot(iSatsCtryN,aes(reorder(country,value),value) ) +
+  geom_segment( aes(x=country ,xend=country, y=0, yend=value), color=ifelse(iSatsCtryN$value > 13, cbPalette[4], cbPalette[2])) +
+  geom_point(size=3, color=ifelse(iSatsCtryN$value > 13, cbPalette[4], cbPalette[2])) +
+  coord_flip() +
+  # scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+  #  theme_ipsum() +
+  theme(
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.y = element_blank(),
+    legend.position="none",
+    plot.title = element_text(color = cbPalette[4], size = 14, face = "bold")
+  ) +
+   labs(title = "Which countries invest the most in Satellites?",
+       subtitle = "Australia's investment appears to be lagging behind similar countries",
+#       caption = "Source: (Union of Concerned Scientists 2020) https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg",
+       y = "Active satellites", x = "Countries") +
+   geom_label(
+    label="Australia's ranked 16th", 
+    x=1.1,
+    y=500,
+    label.padding = unit(0.15, "lines"), # Rectangle size around label
+    label.size = 0.15,
+    color = "black",
+    fill=cbPalette[2]
+  )  +
+  geom_text(aes(label = value), vjust = -1, size = 3,color=ifelse(iSatsCtryN$value > 13, cbPalette[4], cbPalette[2]))
+
+p_iSatCty
+
+
+```
+
+> Figure 6:"Most Satellites",Hunt J 2020,Source: (Union of Concerned Scientists 2020) https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### Orbit patterns  {.no-title}
+
+```{r}
+
+key_countries_disp <- c("USA","China","UK","Japan","Russia","India")
+
+inv_sats_orb <- inv_sats
+inv_sats_orb$country = factor(inv_sats_orb$country, levels = key_countries_disp)
+
+p_orb <- inv_sats_orb %>%
+  group_by(orbitClassR,orbitClassDetH,country) %>%
+  summarise(value = n()) %>%
+  arrange(factor(country, levels = countries_sort)) %>%
+  ggplot(aes(country,value,fill=orbitClassR) ) +
+  geom_bar(stat="identity",position="fill") +
+  labs(title = "How are these satellites orbiting the Earth?",
+       subtitle = "A large percentage can be found in lower orbits",
+       caption = "Note: LEO,GEO & MEO are all circular orbits",
+       fill = "Type of Orbit",                        # Set the legend title
+       y = "Percentage of satellites", x = "Countries") +
+  theme(
+    plot.title = element_text(color = cbPalette[6], size = 14, face = "bold"),
+    plot.caption = element_text(face = "italic",hjust = 0))
+
+p_orb + scale_fill_discrete(labels=c("Elliptical","GEO: ~35,700 Km","MEO: 1,700~35,700 Km","LEO: 80~1,700 Km")) 
+
+#p_orb
+
+
+```
+
+>  Figure 7:"Satellite Orbits",Hunt J 2020,Source: (Union of Concerned Scientists 2020) https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg
+
+### Which months are most satellites launched?  {.no-title}
+
+```{r}
+
+iSatsUp <- inv_sats %>%
+  group_by(lMonNme,lMon) %>%
+  summarise(value = n())
+
+#  a lollipo plot with annotation of launch month
+g_l <- 
+  ggplot(iSatsUp,aes(lMonNme,value)) +
+  geom_segment( aes(x=lMonNme, xend=lMonNme, y=0, yend=value), color=ifelse(iSatsUp$lMonNme %in% c("Jan","Jun","Dec"), cbPalette[3], cbPalette[4]), size=ifelse(iSatsUp$lMonNme %in% c("Jan","Jun","Dec"), 1.3, 0.8)) +
+  geom_point( size=ifelse(iSatsUp$lMonNme %in% c("Jan","Jun","Dec"),4, 3), color=ifelse(iSatsUp$lMonNme %in% c("Jan","Jun","Dec"), cbPalette[3], cbPalette[4]), alpha=0.7, shape=ifelse(iSatsUp$lMonNme %in% c("Jan","Jun","Dec"),18, 20), stroke=2) + 
+  labs(title = "Months which most satellites launched since 1974?",
+       subtitle = "A pattern can be seen where certain months are favoured",
+       y = "Number of satellites", x = "Month") +
+  theme(
+    plot.title = element_text(color = cbPalette[3], size = 14, face = "bold"))
+
+#g_l
+# Annotation of points  
+g_l + annotate("text", x=grep("Jan", iSatsUp$lMonNme), y=iSatsUp$value[which(iSatsUp$lMonNme=="Jan")]*1.1, 
+          label=paste("2nd:",iSatsUp$value[which(iSatsUp$lMonNme=="Jan")]), 
+           color=cbPalette[3], size=4 , angle=0, fontface="bold", hjust=0) +
+      annotate("text", x=grep("Jun", iSatsUp$lMonNme), y=iSatsUp$value[which(iSatsUp$lMonNme=="Jun")]*1.1,                    label=paste("1st:",iSatsUp$value[which(iSatsUp$lMonNme=="Jun")]), 
+           color=cbPalette[3], size=4 , angle=0, fontface="bold", hjust=0) + 
+      annotate("text", x=grep("Nov", iSatsUp$lMonNme), y=iSatsUp$value[which(iSatsUp$lMonNme=="Dec")]*1.1, 
+         label=paste("3rd:",iSatsUp$value[which(iSatsUp$lMonNme=="Dec")]), 
+           color=cbPalette[3], size=4 , angle=0, fontface="bold", hjust=0)
+
+```
+
+> Figure 8:"Launch months",Hunt J 2020,Source: (Union of Concerned Scientists 2020) https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg
+
+
+
+Major Investors
+=======================================================================
+
+Column {data-width=450}
+-----------------------------------------------------------------------
+
+### 6 major players   {.no-title}
+
+```{r}
+
+sats_users <- inv_sats %>% 
+  group_by(country,grpUsers) %>%
+  summarise(value = n())  %>%
+  arrange(desc(value))
+
+sats_users$country <- factor(sats_users$country, levels = key_countriesr)
+
+p_iCty <- ggplot(sats_users, aes(x=country,y=value,fill=grpUsers )) + 
+  geom_bar(stat="identity", position="dodge") +
+  coord_flip() +
+  scale_fill_hue(c = 40) +
+   labs(fill="Sector",title = "Which sectors are the satellites for?",
+       subtitle = "Six of the major powers are heavily invested in this market.",
+       y = "Number of satellites", x = "Countries") +
+   geom_label(
+    label="The US is definitely invested!", 
+    x=5,
+    y=600,
+    label.padding = unit(0.15, "lines"), # Rectangle size around label
+    label.size = 0.15,
+    color = "black",
+    fill="orange") +
+  theme(
+     plot.title = element_text(color = cbPalette[7], size = 14))
+
+p_iCty + guides(fill = guide_legend(reverse = TRUE))
+
+
+```
+
+> Figure 9:"Major players",Hunt J 2020,Source: (Union of Concerned Scientists 2020) https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg
+
+
+Column {data-width=550}
+-----------------------------------------------------------------------
+
+### Military Users   {.no-title}
+
+```{r}
+
+sats_purpose$country <- factor(sats_purpose$country, levels = key_countriesr)
+sats_purpose <- filter(sats_purpose,country %in% c("USA","China","Russia"))
+sats_purpose_m <- filter(sats_purpose,grpUsers=="Military")
+sats_purpose_m$grpPurpose <- factor(sats_purpose_m$grpPurpose,levels = c("Earth Observation","Technology","Communication","Navigation","Space science","Other"))
+
+p_pur_m <- ggplot(sats_purpose_m, aes(x=reorder(grpPurpose,value),y=value,fill=country )) + 
+  geom_bar(stat="identity", position="dodge") +
+  coord_flip() +
+  scale_fill_hue(c = 40) +
+   labs(fill="Owner Country",title = "Should we be concerned about military satellites?",
+       subtitle = "These top three countries invest heavily in the millitary.",
+       y = "Number of satellites", x = "Application") +
+   geom_label(
+    label="Eyes above us!", 
+    x=5.5,
+    y=46,
+    label.padding = unit(0.15, "lines"), # Rectangle size around label
+    label.size = 0.15,
+    color = "black",
+    fill="orange"
+  ) +
+  theme(plot.title = element_text(color = cbPalette[7], size = 14))
+
+p_pur_m  + guides(fill = guide_legend(reverse = TRUE))
+
+
+
+```
+
+> Figure 10:"Millitary power",Hunt J 2020,Source: (Union of Concerned Scientists 2020) https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg
+
+### Commerical Users   {.no-title}
+
+```{r}
+
+sats_purpose$country <- factor(sats_purpose$country, levels = key_countriesr)
+sats_purpose_tmp <- filter(sats_purpose,country %in% c("USA","China","UK"))
+sats_purpose_c <- filter(sats_purpose_tmp,grpUsers=="Commercial")
+sats_purpose_c$grpPurpose <- factor(sats_purpose_c$grpPurpose,levels = c("Earth Observation","Technology","Communication","Navigation","Space science","Other"))
+
+p_pur_c <- ggplot(sats_purpose_c, aes(x=reorder(grpPurpose,value),y=value,fill=country )) + 
+  geom_bar(stat="identity", position="dodge") +
+  coord_flip() +
+  scale_fill_hue(c = 40) +
+   labs(fill="Owner Country",title = "Commercial satellites are put to what uses?",
+       subtitle = "Satellites offer technological advancements for two major investors.",
+       y = "Number of satellites", x = "Application") + 
+   theme(plot.title = element_text(color = cbPalette[7], size = 14))
+
+p_pur_c + guides(fill = guide_legend(reverse = TRUE))
+
+
+```
+
+> Figure 11:"Commercial Expansion",Hunt J 2020,Source: (Union of Concerned Scientists 2020) https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg
+
+
+References
+=======================================================================
+Baglin, J 2020, Data Visualisation: From Theory to Practice, RMIT, Australia
+
+Baglin, J 2020,Data Visualisation and Communication, lecture notes,MATH2404,RMIT University, viewed 12 December 2020,< https://rmit.instructure.com/courses/70748>
+
+Chang, W 2013, R Graphics Cookbook,1st edn, O'Reilly Media, Sebastopol, USA
+
+Data Camp n.d, Data Scientist with R, DataCamp, viewed on 03 December 2020,< https://learn.datacamp.com/>
+
+Data to Viz 2018, From Data to Viz, Data to Viz, viewed on 03 December 2020, < https://www.data-to-viz.com/>
+
+Evergreen, S & Emery A 2016, Data Visualisation Checklist, viewed 13 November 2020,<
+http://stephanieevergreen.com/wp-content/uploads/2016/10/DataVizChecklist_May2016.pdf>
+
+Flexdashboard for R, R Studio n.d, viewed 03 December 2020,<https://rmarkdown.rstudio.com/flexdashboard/>
+
+Miscahi, J 2017, What Was the First Satellite Launched Into Space?, World Atlas, viewed 10 December 2020,<https://www.worldatlas.com/articles/what-was-the-first-satellite-launched-into-space.html#:~:text=Sputnik%201%20was%20the%20first%20ever%20satellite%20to,a%20rocket%20scientist%2C%20who%20named%20it%20Sputnik%201.>
+
+Prabhakaran S 2017, Top 50 ggplot2 Visualizations - The Master List (With Full R Code), viewed on 03 December 2020,< http://r-statistics.co/Top50-Ggplot2-Visualizations-MasterList-R-Code.html#Ordered%20Bar%20Chart>
+
+R graph gallery 2018, The R Graph Gallery, R graph gallery,viewed 02 December 2020, <https://www.r-graph-gallery.com/index.html>
+
+Union of Concerned Scientists 2020, UCS Satellite Database, data file, viewed 02 December 2020, <https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg>
+
+Figures
+
+Figure 1: "Active Satellites", Hunt J 2020, Source: (Union of Concerned Scientists 2020) <https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg>
+
+Figure 2: "Satellite Countries", Hunt J 2020, Source: (Union of Concerned Scientists 2020) <https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg>
+
+Figure 3: "Oldest Satellite", Hunt J 2020, Source: (Union of Concerned Scientists 2020) <https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg>
+
+Figure 4: "2020 Launches", Hunt J 2020, Source: (Union of Concerned Scientists 2020) <https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg>
+
+Figure 5: "Sputniks Launch", Hunt J 2020,Source: (Miscahi, J 2017) <https://www.worldatlas.com/articles/what-was-the-first-satellite-launched-into-space.html#:~:text=Sputnik%201%20was%20the%20first%20ever%20satellite%20to,a%20rocket%20scientist%2C%20who%20named%20it%20Sputnik%201.>
+
+Figure 6:"Most Satellites", Hunt J 2020, Source: (Union of Concerned Scientists 2020) <https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg>
+
+Figure 7:"Satellite Orbits", Hunt J 2020, Source: (Union of Concerned Scientists 2020) <https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg>
+
+Figure 8:"Launch months", Hunt J 2020, Source: (Union of Concerned Scientists 2020) <https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg>
+
+Figure 9:"Major players", Hunt J 2020, Source: (Union of Concerned Scientists 2020) <https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg>
+
+Figure 10:"Millitary power", Hunt J 2020, Source: (Union of Concerned Scientists 2020) <https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg>
+
+Figure 11:"Commercial Expansion", Hunt J 2020, Source: (Union of Concerned Scientists 2020) <https://www.ucsusa.org/resources/satellite-database#.VF_jIlPF8Wg>
+
